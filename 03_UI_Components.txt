@@ -1,0 +1,56 @@
+UI COMPONENTS DEPENDENCY MAP
+
+These files are visual building blocks used across multiple pages.
+
+--------------------------------------------------------------------------------
+1. FILE: components/Navbar.tsx
+--------------------------------------------------------------------------------
+PURPOSE:
+Main navigation header. It contains logic to show/hide links based on authentication status.
+
+DEPENDS ON:
+- firebase.ts (Auth state)
+- services/authService.ts (getIsAdmin function)
+- react-router-dom (Navigation)
+
+USED BY (Downstream Dependencies):
+- App.tsx (Rendered globally)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Mobile: Check mobile responsiveness. If broken, users on phones cannot navigate.
+2. Auth State: Login as a student and ensure "Admin Dashboard" does NOT appear. Login as Admin and ensure it DOES appear.
+
+OPTIMIZATION TIPS:
+- The admin check happens on mount. If authService.ts is slow, the navbar might "flicker" the wrong links. Consider caching the admin claim in local state or context.
+
+--------------------------------------------------------------------------------
+2. FILE: components/QuizBuilder.tsx
+--------------------------------------------------------------------------------
+PURPOSE:
+A complex form component used to add/edit/delete quiz questions.
+
+DEPENDS ON:
+- types.ts (QuizQuestion interface)
+- lucide-react (Icons)
+
+USED BY (Downstream Dependencies):
+- pages/admin/Dashboard.tsx (Embedded in the lesson editor)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Data Flow: This component receives props (questions) and emits changes (onChange). If you change the internal logic, verify that AdminDashboard.tsx actually receives the updated array.
+2. UI: If you change the layout, ensure it fits within the sidebar width of AdminDashboard.tsx.
+
+--------------------------------------------------------------------------------
+3. FILE: components/Footer.tsx
+--------------------------------------------------------------------------------
+PURPOSE:
+Static footer information.
+
+DEPENDS ON:
+- react-router-dom (Location hook to hide on admin pages)
+
+USED BY (Downstream Dependencies):
+- App.tsx (Rendered globally)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Visibility: Ensure it does NOT appear on /admin/dashboard.

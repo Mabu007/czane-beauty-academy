@@ -1,0 +1,67 @@
+SECURED FLOWS DEPENDENCY MAP
+
+These pages require authentication and contain the core business logic.
+
+--------------------------------------------------------------------------------
+1. FILE: pages/admin/Dashboard.tsx
+--------------------------------------------------------------------------------
+PURPOSE:
+The CMS. Allows creating courses, managing students, and editing certificates.
+
+DEPENDS ON:
+- services/courseService.ts (CRUD)
+- services/geminiService.ts (AI)
+- services/cloudinaryService.ts (Uploads)
+- components/QuizBuilder.tsx (UI)
+- types.ts
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Form State: If you change formData structure, you must update the handleSaveCourse function.
+2. Sub-Components: If you update QuizBuilder props, you must update the implementation here.
+3. Services: If courseService.create changes its arguments, this file will break.
+
+OPTIMIZATION TIPS:
+- This file is very large. Consider splitting it into sub-components: AdminCourseList.tsx, AdminStudentList.tsx, AdminCertificateEditor.tsx.
+
+--------------------------------------------------------------------------------
+2. FILE: pages/student/StudentDashboard.tsx
+--------------------------------------------------------------------------------
+PURPOSE:
+Student portal showing enrolled courses and progress.
+
+DEPENDS ON:
+- firebase.ts (Read Enrollments)
+- types.ts (Enrollment interface)
+- services/certificateService.ts (Download)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Data Fetching: If the enrollment query fails (e.g. permissions), ensure the error state appears (recently fixed).
+2. Progress Calculation: If the logic for calculating progress changes, check that it matches the logic in CourseDetails.tsx.
+
+--------------------------------------------------------------------------------
+3. FILE: pages/PaymentPage.tsx
+--------------------------------------------------------------------------------
+PURPOSE:
+Pre-payment summary and PayFast form submission.
+
+DEPENDS ON:
+- services/payfastService.ts (Config)
+- types.ts (Course price)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Form Fields: If you remove hidden inputs, PayFast will reject the transaction.
+2. Return URL: Ensure the return_url hidden input points to /payment/success.
+
+--------------------------------------------------------------------------------
+4. FILE: pages/PaymentSuccess.tsx
+--------------------------------------------------------------------------------
+PURPOSE:
+Handles the callback from PayFast. Creates the enrollment record in Firestore.
+
+DEPENDS ON:
+- firebase.ts (Write Enrollment)
+- types.ts (Enrollment structure)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Critical Data: If this file fails to write to Firestore, the user pays but gets no course. Test this flow thoroughly.
+2. Duplicates: Ensure the logic checks for existing enrollment before creating a new one (idempotency).

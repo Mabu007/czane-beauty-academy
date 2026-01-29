@@ -1,0 +1,90 @@
+CORE INFRASTRUCTURE DEPENDENCY MAP
+
+This file contains the backbone of the application. Errors here cascade to every other part of the system.
+
+--------------------------------------------------------------------------------
+1. FILE: types.ts
+--------------------------------------------------------------------------------
+PURPOSE:
+Defines TypeScript interfaces for data models (Course, Lesson, UserProfile, Enrollment, etc.). It is the contract that the database, services, and UI agree upon.
+
+DEPENDS ON:
+- None (Leaf node)
+
+USED BY (Downstream Dependencies):
+- services/courseService.ts (Enforces Course structure)
+- services/geminiService.ts (Enforces QuizQuestion structure)
+- services/certificateService.ts (Enforces CertificateTemplate)
+- pages/admin/Dashboard.tsx (State management)
+- pages/student/StudentDashboard.tsx (State management)
+- pages/CourseDetails.tsx (State management)
+- components/QuizBuilder.tsx (Prop types)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Immediate: Check services/courseService.ts to ensure Firestore writes match new types.
+2. Immediate: Check pages/admin/Dashboard.tsx forms to ensure they collect the new data.
+3. Secondary: Check pages/LandingPage.tsx and pages/CourseDetails.tsx to ensure they display the new data.
+
+OPTIMIZATION TIPS:
+- Avoid changing existing field names (e.g. price to cost). Instead, extend types using inheritance or partials to maintain backward compatibility with existing Firestore data.
+- If you change QuizQuestion, you must update the AI prompt in geminiService.ts to output the new JSON structure.
+
+--------------------------------------------------------------------------------
+2. FILE: firebase.ts
+--------------------------------------------------------------------------------
+PURPOSE:
+Initializes the Firebase App, Auth, and Firestore instances using environment keys.
+
+DEPENDS ON:
+- firebase/app
+- firebase/auth
+- firebase/firestore
+
+USED BY (Downstream Dependencies):
+- services/* (All services import db or auth)
+- pages/* (Almost all pages import db or auth)
+- index.tsx (Entry point)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Critical: If you change the export names (db, auth), the entire app will fail to compile.
+2. Critical: If you change keys/config, check the browser console immediately for connection errors.
+
+OPTIMIZATION TIPS:
+- This file is a singleton. Ensure you are not calling initializeApp multiple times in other files. Always import db and auth from here, never re-initialize them elsewhere.
+
+--------------------------------------------------------------------------------
+3. FILE: App.tsx
+--------------------------------------------------------------------------------
+PURPOSE:
+The central router that maps URLs to Pages. It also enforces security via AdminRoute and PrivateRoute wrappers.
+
+DEPENDS ON:
+- pages/* (Imports all page components)
+- components/Navbar.tsx
+- components/Footer.tsx
+- services/authService.ts (checkAdminClaim function)
+
+USED BY (Downstream Dependencies):
+- index.tsx (Mounts this component)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Security: If you modify AdminRoute, verify that a non-admin user cannot access /admin/dashboard.
+2. Navigation: If you change a route path (e.g. /payment/:id), you must update services/payfastService.ts return_url generation logic.
+
+--------------------------------------------------------------------------------
+4. FILE: services/authService.ts
+--------------------------------------------------------------------------------
+PURPOSE:
+Handles logic related to user permissions, specifically checking Custom Claims for admin privileges.
+
+DEPENDS ON:
+- firebase.ts (Auth types)
+
+USED BY (Downstream Dependencies):
+- App.tsx (Route protection)
+- components/Navbar.tsx (Conditional menu items)
+- pages/AuthPage.tsx (Post-login redirection)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. UI: Check Navbar.tsx to ensure the "Admin Dashboard" button appears/disappears correctly.
+2. Routing: Check AuthPage.tsx to ensure admins are redirected to the correct dashboard after login.

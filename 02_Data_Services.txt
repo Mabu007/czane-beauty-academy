@@ -1,0 +1,91 @@
+DATA SERVICES DEPENDENCY MAP
+
+These files contain the logic that interacts with external APIs (Firestore, Google AI, Cloudinary, PayFast).
+
+--------------------------------------------------------------------------------
+1. FILE: services/courseService.ts
+--------------------------------------------------------------------------------
+PURPOSE:
+Encapsulates all Firestore read/write operations for the "courses" collection.
+
+DEPENDS ON:
+- firebase.ts (db, getDocs, doc, etc.)
+- types.ts (Course interface)
+
+USED BY (Downstream Dependencies):
+- pages/admin/Dashboard.tsx (Calls create, update, delete)
+- pages/LandingPage.tsx (Calls getAllPublished - logically)
+- pages/Courses.tsx (Calls getAll)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Logic: If you change the query in getAllPublished, verify LandingPage.tsx still shows courses.
+2. Data Integrity: If you add validation here, check AdminDashboard.tsx to ensure valid data is being sent.
+
+OPTIMIZATION TIPS:
+- Implement caching or pagination here if the course list grows too large, otherwise LandingPage.tsx will become slow.
+
+--------------------------------------------------------------------------------
+2. FILE: services/geminiService.ts
+--------------------------------------------------------------------------------
+PURPOSE:
+Interacts with Google Gemini API to generate text descriptions and quiz JSON.
+
+DEPENDS ON:
+- @google/genai
+- types.ts (QuizQuestion structure)
+
+USED BY (Downstream Dependencies):
+- pages/admin/Dashboard.tsx (Triggered by "Generate" buttons)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. AI Output: If you change the prompt text, test the output in AdminDashboard.tsx to ensure it still produces valid JSON.
+2. Types: If types.ts changes the QuizQuestion structure, you MUST update the prompt here to tell the AI the new format.
+
+--------------------------------------------------------------------------------
+3. FILE: services/certificateService.ts
+--------------------------------------------------------------------------------
+PURPOSE:
+Generates a certificate image using HTML5 Canvas API based on a template.
+
+DEPENDS ON:
+- types.ts (CertificateTemplate)
+
+USED BY (Downstream Dependencies):
+- pages/admin/Dashboard.tsx (Live preview)
+- pages/CourseDetails.tsx (Download button)
+- pages/student/StudentDashboard.tsx (Download button)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Visuals: Check AdminDashboard.tsx preview first.
+2. Downloads: Check StudentDashboard.tsx to ensure the download link still triggers correctly.
+
+--------------------------------------------------------------------------------
+4. FILE: services/cloudinaryService.ts
+--------------------------------------------------------------------------------
+PURPOSE:
+Handles file uploads to Cloudinary via HTTP fetch.
+
+DEPENDS ON:
+- constants.ts (Ideally, or internal consts)
+
+USED BY (Downstream Dependencies):
+- pages/admin/Dashboard.tsx (Image/Video uploads)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Functionality: If you change the Cloud Name or Preset, try uploading an image in AdminDashboard.tsx. If it fails, the entire course creation flow is blocked.
+
+--------------------------------------------------------------------------------
+5. FILE: services/payfastService.ts
+--------------------------------------------------------------------------------
+PURPOSE:
+Provides configuration and signature generation for the PayFast payment gateway.
+
+DEPENDS ON:
+- Environment variables
+
+USED BY (Downstream Dependencies):
+- pages/PaymentPage.tsx (Form action URL and hidden inputs)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Financial: If you change the Merchant ID, payments will go to the wrong account or fail.
+2. Routing: Ensure the return_url matches a valid route in App.tsx.

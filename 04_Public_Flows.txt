@@ -1,0 +1,62 @@
+PUBLIC FLOWS DEPENDENCY MAP
+
+These pages are accessible to unauthenticated users or students browsing content.
+
+--------------------------------------------------------------------------------
+1. FILE: pages/LandingPage.tsx
+--------------------------------------------------------------------------------
+PURPOSE:
+The entry point of the application. Displays marketing info and the list of available courses.
+
+DEPENDS ON:
+- services/courseService.ts (To fetch courses)
+- firebase.ts (Direct Firestore queries)
+- types.ts (Course interface)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Data Loading: If you change the Firestore query (e.g., sort order), verify that the "CoursesLoading" state still transitions correctly to the list view.
+2. Navigation: Check that clicking a course card correctly navigates to /course/:id.
+
+OPTIMIZATION TIPS:
+- This page currently fetches all courses on load. If you have 100+ courses, introduce pagination in courseService.ts and implement "Load More" here.
+
+--------------------------------------------------------------------------------
+2. FILE: pages/CourseDetails.tsx
+--------------------------------------------------------------------------------
+PURPOSE:
+Displays course content. Handles logic for locking/unlocking content based on enrollment status.
+
+DEPENDS ON:
+- firebase.ts (Fetches Course and Enrollment)
+- types.ts (Course, Enrollment, QuizQuestion)
+- services/certificateService.ts (Certificate generation)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Security: If you touch the "isLocked" logic, verify that a non-enrolled user CANNOT access video content.
+2. Quiz Logic: If you modify handleQuizSubmit, verify that the result is correctly written to the enrollment document in Firestore.
+
+--------------------------------------------------------------------------------
+3. FILE: pages/AuthPage.tsx
+--------------------------------------------------------------------------------
+PURPOSE:
+Handles Login and Registration.
+
+DEPENDS ON:
+- firebase.ts (Auth SDK)
+- services/authService.ts (Checks claims after login)
+
+HIERARCHY CHECKLIST (If you change this file):
+1. Redirection: After login, ensure the user goes to the correct dashboard based on their role. If this fails, admins might get stuck on the student view.
+2. Registration: Ensure new users are created in the "users" Firestore collection, otherwise AdminDashboard will not list them.
+
+--------------------------------------------------------------------------------
+4. FILE: pages/Spa.tsx
+--------------------------------------------------------------------------------
+PURPOSE:
+Static marketing page for Kids Spa.
+
+DEPENDS ON:
+- None (Internal static data)
+
+HIERARCHY CHECKLIST:
+- Visual check only.
