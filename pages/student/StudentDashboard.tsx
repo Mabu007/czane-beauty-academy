@@ -4,10 +4,9 @@ import { auth, db } from '../../firebase';
 import { collection, query, where, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
 import { Course, Enrollment, CertificateTemplate } from '../../types';
 import { generateCertificate } from '../../services/certificateService';
-import { LogOut, BookOpen, Clock, Award, PlayCircle, CheckCircle, Loader2, Download, ExternalLink, AlertTriangle } from 'lucide-react';
-import * as RouterDOM from 'react-router-dom';
-
-const { Link, useNavigate } = RouterDOM;
+import { courseService } from '../../services/courseService';
+import { LogOut, BookOpen, Clock, Award, PlayCircle, CheckCircle, Loader2, Download, ExternalLink, AlertTriangle, ShoppingBag, ArrowRight } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
 
 interface EnrolledCourseData extends Course {
   enrollmentId: string;
@@ -21,6 +20,7 @@ export const StudentDashboard: React.FC = () => {
   const [user, loadingAuth] = useAuthState(auth);
   const navigate = useNavigate();
   const [enrolledCourses, setEnrolledCourses] = useState<EnrolledCourseData[]>([]);
+  const [availableCourses, setAvailableCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generatingCertId, setGeneratingCertId] = useState<string | null>(null);
@@ -30,20 +30,24 @@ export const StudentDashboard: React.FC = () => {
   }, [user, loadingAuth, navigate]);
 
   useEffect(() => {
-    const fetchEnrollments = async () => {
+    const fetchData = async () => {
       if (!user) return;
       setError(null);
       
       try {
+        // 1. Fetch Enrollments
         const q = query(collection(db, "enrollments"), where("userId", "==", user.uid));
         const snapshot = await getDocs(q);
         
         const coursesData: EnrolledCourseData[] = [];
+        const enrolledIds: string[] = [];
 
         for (const enrollmentDoc of snapshot.docs) {
           const enrollment = enrollmentDoc.data() as Enrollment;
           
           if (!enrollment.courseId) continue;
+          
+          enrolledIds.push(enrollment.courseId);
 
           try {
             const courseDoc = await getDoc(doc(db, "courses", enrollment.courseId));
@@ -65,21 +69,26 @@ export const StudentDashboard: React.FC = () => {
               });
             }
           } catch (courseError) {
-            console.warn(`Failed to load course ${enrollment.courseId} for enrollment ${enrollmentDoc.id}. This might be due to permissions (e.g. Draft course) or deletion.`, courseError);
-            // Continue loop so other courses load
+            console.warn(`Failed to load course ${enrollment.courseId} for enrollment ${enrollmentDoc.id}.`, courseError);
           }
         }
         setEnrolledCourses(coursesData);
+
+        // 2. Fetch Available Courses (Not Enrolled)
+        const allPublished = await courseService.getAllPublished();
+        const notEnrolled = allPublished.filter(c => !enrolledIds.includes(c.id));
+        setAvailableCourses(notEnrolled);
+
       } catch (err: any) {
-        console.error("Error fetching enrollments:", err);
-        setError("We couldn't load your enrolled courses due to a permission issue. Please contact support.");
+        console.error("Error fetching dashboard data:", err);
+        setError("We couldn't load your dashboard data due to a permission issue. Please contact support.");
       } finally {
         setLoading(false);
       }
     };
 
     if (!loadingAuth && user) {
-        fetchEnrollments();
+        fetchData();
     }
   }, [user, loadingAuth]);
 
@@ -203,12 +212,14 @@ export const StudentDashboard: React.FC = () => {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-12 pb-20">
+        
+        {/* ENROLLED COURSES SECTION */}
         <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center">
           <PlayCircle className="w-5 h-5 mr-2 text-pink-600" /> Your Courses
         </h2>
 
         {error ? (
-           <div className="bg-white rounded-2xl shadow-sm p-10 text-center border border-red-100">
+           <div className="bg-white rounded-2xl shadow-sm p-10 text-center border border-red-100 mb-12">
              <div className="w-16 h-16 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-4">
                <AlertTriangle className="w-8 h-8 text-red-400" />
              </div>
@@ -219,20 +230,20 @@ export const StudentDashboard: React.FC = () => {
              </Link>
            </div>
         ) : enrolledCourses.length === 0 ? (
-          <div className="bg-white rounded-2xl shadow-sm p-10 text-center border border-gray-200">
+          <div className="bg-white rounded-2xl shadow-sm p-10 text-center border border-gray-200 mb-12">
             <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <BookOpen className="w-8 h-8 text-gray-400" />
             </div>
             <h3 className="text-lg font-bold text-gray-800 mb-2">No courses yet</h3>
             <p className="text-gray-500 mb-6">You haven't enrolled in any courses yet. Start your journey today!</p>
-            <Link to="/#courses" className="bg-pink-600 text-white px-6 py-3 rounded-full font-bold hover:bg-pink-700 transition">
-              Browse Courses
-            </Link>
+            <button onClick={() => document.getElementById('available-courses')?.scrollIntoView({ behavior: 'smooth' })} className="bg-pink-600 text-white px-6 py-3 rounded-full font-bold hover:bg-pink-700 transition">
+              Browse Available Courses
+            </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mb-16">
             {enrolledCourses.map(course => (
-              <div key={course.id} className="bg-white rounded-xl shadow-lg overflow-hidden flex flex-col hover:shadow-xl transition duration-300">
+              <div key={course.id} className="bg-white rounded-xl shadow-lg overflow-hidden flex flex-col hover:shadow-xl transition duration-300 border border-gray-100">
                 <div className="h-40 bg-gray-200 relative">
                   <img 
                     src={course.image || 'https://via.placeholder.com/300'} 
@@ -291,6 +302,42 @@ export const StudentDashboard: React.FC = () => {
             ))}
           </div>
         )}
+
+        {/* EXPLORE MORE COURSES SECTION */}
+        {availableCourses.length > 0 && (
+          <div id="available-courses">
+            <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center border-t border-gray-200 pt-10">
+              <ShoppingBag className="w-5 h-5 mr-2 text-purple-600" /> Explore More Courses
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {availableCourses.map(course => (
+                   <div key={course.id} className="bg-white rounded-xl shadow-sm hover:shadow-lg transition flex flex-col border border-gray-100">
+                      <div className="h-32 bg-gray-200 relative">
+                        <img 
+                          src={course.image || 'https://via.placeholder.com/300'} 
+                          alt={course.title} 
+                          className="w-full h-full object-cover rounded-t-xl"
+                        />
+                         <span className={`absolute top-2 right-2 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-white/90 text-purple-800 shadow-sm`}>
+                            {course.level}
+                         </span>
+                      </div>
+                      <div className="p-4 flex flex-col flex-1">
+                          <h3 className="font-bold text-gray-900 mb-1 line-clamp-1">{course.title}</h3>
+                          <div className="text-pink-600 font-bold mb-3">R{course.price}</div>
+                          <Link 
+                            to={`/course/${course.id}`} 
+                            className="mt-auto block w-full text-center border border-purple-200 bg-purple-50 text-purple-700 py-2 rounded-lg font-bold hover:bg-purple-100 transition text-xs flex items-center justify-center"
+                          >
+                             View Details <ArrowRight className="w-3 h-3 ml-1"/>
+                          </Link>
+                      </div>
+                   </div>
+                ))}
+            </div>
+          </div>
+        )}
+
       </div>
     </div>
   );

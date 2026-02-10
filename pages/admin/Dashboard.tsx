@@ -7,13 +7,13 @@ import { collection, getDocs, orderBy, query, doc, setDoc, addDoc, where, getDoc
 import { Course, UserProfile, Lesson, Enrollment, CertificateTemplate, QuizResult } from '../../types';
 import { courseService } from '../../services/courseService';
 import { generateCourseDescription, generateQuizQuestions, generateExamQuestions } from '../../services/geminiService';
-import { uploadToCloudinary } from '../../services/cloudinaryService';
+import { uploadToSupabase, setGlobalSupabaseUrl } from '../../services/supabaseService';
 import { QuizBuilder } from '../../components/QuizBuilder';
 import { generateCertificate } from '../../services/certificateService';
 import { 
   Plus, BookOpen, Users, LogOut, Sparkles, Trash, Edit, Save, 
   Video, FileText, File, HelpCircle, Upload, ChevronDown, ChevronRight, X, GraduationCap,
-  Eye, EyeOff, UserPlus, CheckCircle, Award, BarChart, ExternalLink, Lock, Download
+  Eye, EyeOff, UserPlus, CheckCircle, Award, BarChart, ExternalLink, Lock, Download, Loader2
 } from 'lucide-react';
 import * as RouterDOM from 'react-router-dom';
 
@@ -32,7 +32,9 @@ const AdminDashboard: React.FC = () => {
   const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [quizLoading, setQuizLoading] = useState(false);
-  const [uploading, setUploading] = useState(false);
+  
+  // Changed from boolean to string | null to track WHICH item is uploading
+  const [uploadingId, setUploadingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   
   // Student Detail View State
@@ -307,9 +309,18 @@ const AdminDashboard: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setUploading(true);
+    // Determine a unique ID for the uploading state
+    let uploadKey = 'cover';
+    if (target === 'cert') uploadKey = 'cert';
+    if (target === 'lesson' && moduleIndex !== undefined && lessonIndex !== undefined) {
+        // Find the lesson ID to show loader on the specific lesson
+        const lessonId = formData.modules?.[moduleIndex]?.lessons?.[lessonIndex]?.id;
+        if (lessonId) uploadKey = lessonId;
+    }
+
+    setUploadingId(uploadKey);
     try {
-      const url = await uploadToCloudinary(file);
+      const url = await uploadToSupabase(file);
       
       if (target === 'cover') {
         setFormData(prev => ({ ...prev, image: url }));
@@ -320,10 +331,37 @@ const AdminDashboard: React.FC = () => {
       } else if (target === 'cert') {
         handleTemplateChange('backgroundUrl', url);
       }
-    } catch (error) {
-      alert("Upload failed");
+    } catch (error: any) {
+      console.error(error);
+      
+      // FIX FOR MISSING SUPABASE URL:
+      if (error.message && (error.message.includes("Missing Supabase URL") || error.message.includes("Missing Supabase Project URL"))) {
+          const correctUrl = window.prompt("Configuration Error: Missing Supabase Project URL.\n\nPlease enter your Supabase Project URL (e.g. https://xyz.supabase.co):");
+          if (correctUrl) {
+              try {
+                  setGlobalSupabaseUrl(correctUrl);
+                  const url = await uploadToSupabase(file, correctUrl);
+                  
+                  // Success after retry!
+                  if (target === 'cover') {
+                    setFormData(prev => ({ ...prev, image: url }));
+                  } else if (target === 'lesson' && lessonIndex !== undefined && moduleIndex !== undefined) {
+                    const newModules = [...(formData.modules || [])];
+                    newModules[moduleIndex].lessons[lessonIndex].content = url;
+                    setFormData(prev => ({ ...prev, modules: newModules }));
+                  } else if (target === 'cert') {
+                    handleTemplateChange('backgroundUrl', url);
+                  }
+                  alert(`Upload Successful! Please add "SUPABASE_URL=${correctUrl}" to your .env file to save this permanently.`);
+              } catch (retryError: any) {
+                  alert("Retry failed: " + retryError.message);
+              }
+          }
+      } else {
+         alert(error.message || "Upload failed. Ensure file is not too large.");
+      }
     } finally {
-      setUploading(false);
+      setUploadingId(null);
     }
   };
 
@@ -331,10 +369,7 @@ const AdminDashboard: React.FC = () => {
     e.preventDefault();
     setSaving(true);
     try {
-      // Data Sanitization: Remove undefined values before sending to Firestore
-      // "Missing or insufficient permissions" often occurs if sending 'undefined' fields in older SDKs or specific strict configs,
-      // but primarily it occurs due to Firestore Rules.
-      // We clean the object to be safe.
+      // Data Sanitization
       const cleanData = JSON.parse(JSON.stringify(formData));
       
       if (formData.id) {
@@ -507,7 +542,7 @@ const AdminDashboard: React.FC = () => {
                            <input type="file" className="hidden" onChange={(e) => handleFileUpload(e, 'cover')} accept="image/*" />
                          </label>
                       </div>
-                      {uploading && <span className="text-xs text-blue-500 font-medium mt-1 block">Uploading image...</span>}
+                      {uploadingId === 'cover' && <span className="text-xs text-blue-500 font-medium mt-1 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin"/> Uploading cover...</span>}
                     </div>
                   </div>
 
@@ -567,9 +602,15 @@ const AdminDashboard: React.FC = () => {
                                             onChange={(e) => updateLesson(mIdx, lIdx, 'content', e.target.value)}
                                             className="flex-1 border rounded p-2 text-xs bg-white"
                                           />
-                                          <label className="cursor-pointer bg-gray-200 px-3 py-1.5 rounded text-xs hover:bg-gray-300 font-medium">
-                                            Upload
-                                            <input type="file" className="hidden" onChange={(e) => handleFileUpload(e, 'lesson', lIdx, mIdx)} accept={lesson.type === 'video' ? "video/*" : "application/pdf"} />
+                                          <label className={`cursor-pointer bg-gray-200 px-3 py-1.5 rounded text-xs hover:bg-gray-300 font-medium flex items-center gap-2 ${uploadingId === lesson.id ? 'opacity-50 pointer-events-none' : ''}`}>
+                                            {uploadingId === lesson.id ? <Loader2 className="w-3 h-3 animate-spin"/> : <Upload className="w-3 h-3"/>}
+                                            {uploadingId === lesson.id ? 'Uploading...' : 'Upload'}
+                                            <input 
+                                                type="file" 
+                                                className="hidden" 
+                                                onChange={(e) => handleFileUpload(e, 'lesson', lIdx, mIdx)} 
+                                                accept={lesson.type === 'video' ? "video/*" : ".pdf,application/pdf"} 
+                                            />
                                           </label>
                                        </div>
                                     )}
@@ -739,6 +780,7 @@ const AdminDashboard: React.FC = () => {
                            <input type="file" className="hidden" onChange={(e) => handleFileUpload(e, 'cert')} accept="image/*" />
                         </label>
                       </div>
+                       {uploadingId === 'cert' && <span className="text-xs text-blue-500 font-medium mt-1 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin"/> Uploading background...</span>}
                   </div>
                   <button onClick={handleSaveTemplate} disabled={saving} className="w-full bg-pink-600 text-white font-bold py-3 rounded-lg hover:bg-pink-700 mt-4">
                     {saving ? 'Saving...' : 'Save Template'}

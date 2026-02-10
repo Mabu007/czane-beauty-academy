@@ -1,13 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import * as RouterDOM from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { auth, db } from '../firebase';
 import { doc, getDoc, updateDoc, arrayUnion, query, collection, where, getDocs, setDoc } from 'firebase/firestore';
 import { Course, Enrollment, CertificateTemplate, QuizQuestion, Lesson } from '../types';
 import { generateCertificate } from '../services/certificateService';
-import { ArrowLeft, Clock, BarChart, ChevronDown, ChevronUp, PlayCircle, FileText, File, HelpCircle, Lock, BookOpen, Users, GraduationCap, CreditCard, CheckCircle, Award, Download, AlertCircle, X, Loader2 } from 'lucide-react';
-
-const { useParams, Link, useNavigate } = RouterDOM;
+import { ArrowLeft, Clock, BarChart, ChevronDown, ChevronUp, PlayCircle, FileText, File, HelpCircle, Lock, BookOpen, Users, GraduationCap, CreditCard, CheckCircle, Award, Download, AlertCircle, X, Loader2, Maximize, Minimize } from 'lucide-react';
 
 export const CourseDetails: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -22,6 +20,7 @@ export const CourseDetails: React.FC = () => {
   
   // Lesson Viewer State
   const [activeLesson, setActiveLesson] = useState<Lesson | null>(null);
+  const [isMaximized, setIsMaximized] = useState(false);
 
   // Quiz State
   const [activeQuizLesson, setActiveQuizLesson] = useState<{lessonId: string, questions: QuizQuestion[]} | null>(null);
@@ -94,21 +93,41 @@ export const CourseDetails: React.FC = () => {
   };
 
   const handleEnroll = () => {
-    if (course) navigate(`/payment/${course.id}`);
+      if (course) navigate(`/payment/${course.id}`);
+    };
+
+  // Helper to calculate progress
+  const calculateProgress = (completedLessonIds: string[]) => {
+      if (!course) return 0;
+      const totalLessons = course.modules?.reduce((acc, m) => acc + m.lessons.length, 0) || 0;
+      return totalLessons > 0 ? Math.round((completedLessonIds.length / totalLessons) * 100) : 0;
   };
 
   const markLessonComplete = async (lessonId: string) => {
-    if (!enrollment) return;
+    if (!enrollment || !course) return;
     if (enrollment.completedLessons?.includes(lessonId)) return;
 
     try {
         const enrolRef = doc(db, "enrollments", enrollment.id);
+        const newCompleted = [...(enrollment.completedLessons || []), lessonId];
+        const newProgress = calculateProgress(newCompleted);
+
+        // Update local state optimistically
+        setEnrollment(prev => prev ? { ...prev, completedLessons: newCompleted, progress: newProgress } : null);
+
+        // NOTE: We do NOT send 'progress' to Firestore. 
+        // Firestore rules often block updates to fields that should be calculated or verified.
+        // We only update 'completedLessons'. The UI derives progress from that.
         await updateDoc(enrolRef, {
             completedLessons: arrayUnion(lessonId)
         });
-        setEnrollment(prev => prev ? { ...prev, completedLessons: [...(prev.completedLessons || []), lessonId] } : null);
-    } catch (e) {
+        
+    } catch (e: any) {
         console.error("Error marking complete", e);
+        // Revert local state if needed, or show error
+        if (e.code === 'permission-denied') {
+            alert("Warning: Progress saved locally but failed to sync with server. Check permissions.");
+        }
     }
   };
 
@@ -120,7 +139,7 @@ export const CourseDetails: React.FC = () => {
   };
 
   const handleQuizSubmit = async () => {
-    if (!activeQuizLesson || !enrollment) return;
+    if (!activeQuizLesson || !enrollment || !course) return;
     
     let correct = 0;
     activeQuizLesson.questions.forEach((q, idx) => {
@@ -151,38 +170,55 @@ export const CourseDetails: React.FC = () => {
     const passed = (correct / activeQuizLesson.questions.length) >= 0.5;
     
     if (passed) {
-        const resultKey = `quizResults.${activeQuizLesson.lessonId}`;
-        const enrolRef = doc(db, "enrollments", enrollment.id);
-        
-        // Update Quiz Result & Mark Lesson Complete
-        await updateDoc(enrolRef, {
-            [resultKey]: {
-                lessonId: activeQuizLesson.lessonId,
-                score: correct,
-                totalQuestions: activeQuizLesson.questions.length,
-                dateTaken: new Date().toISOString(),
-                passed: true
-            },
-            completedLessons: arrayUnion(activeQuizLesson.lessonId)
-        });
+        try {
+            const resultKey = `quizResults.${activeQuizLesson.lessonId}`;
+            const enrolRef = doc(db, "enrollments", enrollment.id);
+            
+            // Calculate new progress
+            const isAlreadyCompleted = enrollment.completedLessons?.includes(activeQuizLesson.lessonId);
+            const newCompleted = isAlreadyCompleted 
+                ? (enrollment.completedLessons || []) 
+                : [...(enrollment.completedLessons || []), activeQuizLesson.lessonId];
+            
+            const newProgress = calculateProgress(newCompleted);
 
-        // Update local state
-        setEnrollment(prev => {
-           if(!prev) return null;
-           const newResults = { ...(prev.quizResults || {}) };
-           newResults[activeQuizLesson.lessonId] = {
-                lessonId: activeQuizLesson.lessonId,
-                score: correct,
-                totalQuestions: activeQuizLesson.questions.length,
-                dateTaken: new Date().toISOString(),
-                passed: true
-           };
-           return { 
-               ...prev, 
-               completedLessons: [...(prev.completedLessons || []), activeQuizLesson.lessonId],
-               quizResults: newResults
-           };
-        });
+            // Update Quiz Result & Mark Lesson Complete
+            // NOTE: Removed 'progress' update to avoid permissions issues
+            await updateDoc(enrolRef, {
+                [resultKey]: {
+                    lessonId: activeQuizLesson.lessonId,
+                    score: correct,
+                    totalQuestions: activeQuizLesson.questions.length,
+                    dateTaken: new Date().toISOString(),
+                    passed: true
+                },
+                completedLessons: arrayUnion(activeQuizLesson.lessonId)
+            });
+
+            // Update local state
+            setEnrollment(prev => {
+            if(!prev) return null;
+            const newResults = { ...(prev.quizResults || {}) };
+            newResults[activeQuizLesson.lessonId] = {
+                    lessonId: activeQuizLesson.lessonId,
+                    score: correct,
+                    totalQuestions: activeQuizLesson.questions.length,
+                    dateTaken: new Date().toISOString(),
+                    passed: true
+            };
+            return { 
+                ...prev, 
+                completedLessons: newCompleted,
+                progress: newProgress,
+                quizResults: newResults
+            };
+            });
+        } catch (e: any) {
+            console.error("Error saving quiz result", e);
+             if (e.code === 'permission-denied') {
+                alert("Quiz passed, but failed to save progress to server (Permissions).");
+            }
+        }
     }
   };
 
@@ -228,6 +264,7 @@ export const CourseDetails: React.FC = () => {
   };
 
   // --- Calculation ---
+  // Re-calculate for UI rendering based on current enrollment state
   const totalLessons = course?.modules?.reduce((acc, m) => acc + m.lessons.length, 0) || 0;
   const completedCount = enrollment?.completedLessons?.length || 0;
   const progressPercent = totalLessons > 0 ? Math.round((completedCount / totalLessons) * 100) : 0;
@@ -362,7 +399,8 @@ export const CourseDetails: React.FC = () => {
                                          ) : (
                                             <button 
                                                 onClick={() => {
-                                                  markLessonComplete(lesson.id);
+                                                  // NOTE: We no longer auto-mark complete here.
+                                                  // markLessonComplete(lesson.id);
                                                   setActiveLesson(lesson);
                                                 }}
                                                 className="text-xs px-3 py-1 rounded-full font-bold border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 transition"
@@ -412,21 +450,34 @@ export const CourseDetails: React.FC = () => {
 
       {/* LESSON CONTENT MODAL */}
       {activeLesson && (
-        <div className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-200">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-                <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                    <h3 className="text-xl font-bold text-gray-800 flex items-center">
-                        {activeLesson.type === 'video' && <PlayCircle className="w-5 h-5 mr-2 text-blue-500"/>}
-                        {activeLesson.type === 'text' && <FileText className="w-5 h-5 mr-2 text-gray-500"/>}
-                        {activeLesson.type === 'pdf' && <File className="w-5 h-5 mr-2 text-red-500"/>}
-                        {activeLesson.title}
+        <div className={`fixed inset-0 bg-black/90 z-50 flex items-center justify-center backdrop-blur-sm animate-in fade-in duration-200 ${isMaximized ? 'p-0' : 'p-4'}`}>
+            <div className={`bg-white shadow-2xl w-full flex flex-col overflow-hidden transition-all duration-300 ${isMaximized ? 'h-full rounded-none' : 'max-w-5xl max-h-[90vh] rounded-2xl'}`}>
+                {/* Header */}
+                <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50 shrink-0">
+                    <h3 className="text-xl font-bold text-gray-800 flex items-center truncate mr-4">
+                        {activeLesson.type === 'video' && <PlayCircle className="w-5 h-5 mr-2 text-blue-500 flex-shrink-0"/>}
+                        {activeLesson.type === 'text' && <FileText className="w-5 h-5 mr-2 text-gray-500 flex-shrink-0"/>}
+                        {activeLesson.type === 'pdf' && <File className="w-5 h-5 mr-2 text-red-500 flex-shrink-0"/>}
+                        <span className="truncate">{activeLesson.title}</span>
                     </h3>
-                    <button onClick={() => setActiveLesson(null)} className="p-2 hover:bg-gray-200 rounded-full transition text-gray-500"><X className="w-6 h-6"/></button>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                        <button 
+                            onClick={() => setIsMaximized(!isMaximized)} 
+                            className="p-2 hover:bg-gray-200 rounded-full transition text-gray-500 hidden md:block"
+                            title={isMaximized ? "Minimize" : "Maximize"}
+                        >
+                            {isMaximized ? <Minimize className="w-5 h-5"/> : <Maximize className="w-5 h-5"/>}
+                        </button>
+                        <button onClick={() => setActiveLesson(null)} className="p-2 hover:bg-gray-200 rounded-full transition text-gray-500">
+                            <X className="w-6 h-6"/>
+                        </button>
+                    </div>
                 </div>
                 
-                <div className="p-0 overflow-y-auto bg-black/5 flex-grow relative">
+                {/* Content Body - Handles its own scroll */}
+                <div className={`flex-grow relative bg-gray-100 ${activeLesson.type === 'text' ? 'overflow-y-auto' : 'overflow-hidden'}`}>
                     {activeLesson.type === 'video' && (
-                        <div className="w-full h-full min-h-[50vh] flex items-center justify-center bg-black">
+                        <div className="w-full h-full flex items-center justify-center bg-black">
                              {activeLesson.content && (activeLesson.content.includes('youtube.com') || activeLesson.content.includes('youtu.be')) ? (
                                 <iframe 
                                   src={activeLesson.content.replace('watch?v=', 'embed/').replace('youtu.be/', 'youtube.com/embed/')} 
@@ -435,35 +486,73 @@ export const CourseDetails: React.FC = () => {
                                   title="Video Content"
                                 />
                              ) : (
-                                <video 
-                                    src={activeLesson.content} 
-                                    controls 
-                                    className="max-w-full max-h-[80vh] outline-none" 
-                                    autoPlay
-                                />
+                                <div className="relative w-full h-full flex justify-center bg-black" onContextMenu={(e) => e.preventDefault()}>
+                                    <video 
+                                        src={activeLesson.content} 
+                                        controls 
+                                        controlsList="nodownload" 
+                                        disablePictureInPicture
+                                        className="max-w-full max-h-full outline-none" 
+                                        autoPlay
+                                    />
+                                    {/* Transparent overlay for extra context menu protection */}
+                                    <div className="absolute inset-0 pointer-events-none" />
+                                </div>
                              )}
                         </div>
                     )}
                     
                     {activeLesson.type === 'text' && (
-                        <div className="p-8 prose prose-lg max-w-none bg-white min-h-full">
+                        <div className="p-8 prose prose-lg max-w-none bg-white min-h-full mx-auto">
                            <div className="whitespace-pre-wrap">{activeLesson.content}</div>
                         </div>
                     )}
 
                     {activeLesson.type === 'pdf' && (
-                         <div className="w-full h-full min-h-[70vh] bg-gray-100">
-                             <iframe src={activeLesson.content} className="w-full h-full" title={activeLesson.title} />
+                         <div 
+                           className="w-full h-full relative" 
+                           onContextMenu={(e) => e.preventDefault()} // Disable right-click context menu
+                         >
+                             <iframe 
+                                // Append params to hide toolbar, navpanes, and scrollbar in generic viewers
+                                src={`${activeLesson.content}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} 
+                                className="w-full h-full block" 
+                                title={activeLesson.title}
+                                style={{ border: 'none' }}
+                             />
+                             {/* Overlay to block direct interactions like save image context menus if iframe allows bubbling */}
+                             <div className="absolute inset-0 pointer-events-none"></div>
                          </div>
                     )}
                 </div>
-                 {activeLesson.type === 'pdf' && (
-                    <div className="p-4 bg-gray-50 border-t text-right">
-                        <a href={activeLesson.content} target="_blank" rel="noreferrer" className="inline-flex items-center text-blue-600 hover:underline text-sm font-bold">
-                            <Download className="w-4 h-4 mr-2"/> Download PDF
-                        </a>
-                    </div>
-                 )}
+                
+                {/* FOOTER - MARK AS COMPLETE */}
+                <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-end gap-3 shrink-0">
+                    <button 
+                        onClick={() => setActiveLesson(null)} 
+                        className="px-4 py-2 text-gray-500 font-bold hover:bg-gray-200 rounded-lg transition"
+                    >
+                        Close
+                    </button>
+                    {enrollment?.completedLessons?.includes(activeLesson.id) ? (
+                         <button 
+                            disabled
+                            className="bg-green-100 text-green-700 px-6 py-2 rounded-lg font-bold flex items-center cursor-default"
+                        >
+                            <CheckCircle className="w-4 h-4 mr-2"/> Completed
+                        </button>
+                    ) : (
+                        <button 
+                            onClick={() => {
+                                markLessonComplete(activeLesson.id);
+                                setActiveLesson(null);
+                            }}
+                            className="bg-green-600 text-white px-6 py-2 rounded-lg font-bold hover:bg-green-700 transition flex items-center shadow-lg"
+                        >
+                            <CheckCircle className="w-4 h-4 mr-2"/> Done Reading
+                        </button>
+                    )}
+                </div>
             </div>
         </div>
       )}
