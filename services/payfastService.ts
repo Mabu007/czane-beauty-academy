@@ -2,7 +2,8 @@
 // Credentials are read from environment variables to keep them out of source control.
 // Merchant ID and Key are required in the HTML form, so they are public in the client-side code by necessity.
 
-const isProduction = process.env.NODE_ENV === 'production';
+const isProduction = false;
+
 
 export const payfastConfig = {
     // Default to Sandbox credentials if env vars are missing
