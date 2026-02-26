@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { auth, db } from '../../firebase';
 import { initializeApp } from 'firebase/app';
-import * as firebaseAuth from 'firebase/auth'; // Specific imports for secondary app
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth'; 
 import { collection, getDocs, orderBy, query, doc, setDoc, addDoc, where, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { Course, UserProfile, Lesson, Enrollment, CertificateTemplate, QuizResult } from '../../types';
+import { Course, UserProfile, Lesson, Enrollment, CertificateTemplate, QuizResult, StudentUpload } from '../../types';
 import { courseService } from '../../services/courseService';
 import { generateCourseDescription, generateQuizQuestions, generateExamQuestions } from '../../services/geminiService';
 import { uploadToSupabase, setGlobalSupabaseUrl } from '../../services/supabaseService';
@@ -13,11 +13,9 @@ import { generateCertificate } from '../../services/certificateService';
 import { 
   Plus, BookOpen, Users, LogOut, Sparkles, Trash, Edit, Save, 
   Video, FileText, File, HelpCircle, Upload, ChevronDown, ChevronRight, X, GraduationCap,
-  Eye, EyeOff, UserPlus, CheckCircle, Award, BarChart, ExternalLink, Lock, Download, Loader2
+  Eye, EyeOff, UserPlus, CheckCircle, Award, BarChart, ExternalLink, Lock, Download, Loader2, AlertTriangle
 } from 'lucide-react';
-import * as RouterDOM from 'react-router-dom';
-
-const { useNavigate } = RouterDOM;
+import { useNavigate } from 'react-router-dom';
 
 const AdminDashboard: React.FC = () => {
   const [user, loadingAuth] = useAuthState(auth);
@@ -25,6 +23,8 @@ const AdminDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'courses' | 'students' | 'certificates'>('courses');
   const [courses, setCourses] = useState<Course[]>([]);
   const [students, setStudents] = useState<UserProfile[]>([]);
+  const [loadingStudents, setLoadingStudents] = useState(false);
+  const [studentsError, setStudentsError] = useState<string | null>(null);
   
   // UI States
   const [isEditing, setIsEditing] = useState(false);
@@ -40,6 +40,7 @@ const AdminDashboard: React.FC = () => {
   // Student Detail View State
   const [viewingStudent, setViewingStudent] = useState<UserProfile | null>(null);
   const [studentEnrollments, setStudentEnrollments] = useState<Enrollment[]>([]);
+  const [studentUploads, setStudentUploads] = useState<StudentUpload[]>([]);
   
   // Certificate Designer State
   const [certTemplate, setCertTemplate] = useState<CertificateTemplate>({
@@ -87,6 +88,8 @@ const AdminDashboard: React.FC = () => {
   };
 
   const loadStudents = async () => {
+    setLoadingStudents(true);
+    setStudentsError(null);
     try {
       const q = query(collection(db, "users"), orderBy("createdAt", "desc"));
       const snapshot = await getDocs(q);
@@ -96,8 +99,15 @@ const AdminDashboard: React.FC = () => {
           return { ...data, uid: doc.id } as UserProfile;
       });
       setStudents(studentData);
-    } catch (e) {
+    } catch (e: any) {
       console.error("Error loading students", e);
+      if (e.code === 'permission-denied') {
+          setStudentsError("Access Denied: You do not have permission to view students. Please ensure your account has the 'admin' role.");
+      } else {
+          setStudentsError("Failed to load students. Please try again.");
+      }
+    } finally {
+      setLoadingStudents(false);
     }
   };
 
@@ -142,8 +152,8 @@ const AdminDashboard: React.FC = () => {
             projectId: "czane-c3786",
         }, "SecondaryApp");
 
-        const tempAuth = firebaseAuth.getAuth(tempApp);
-        const userCred = await firebaseAuth.createUserWithEmailAndPassword(tempAuth, studentForm.email, studentForm.password);
+        const tempAuth = getAuth(tempApp);
+        const userCred = await createUserWithEmailAndPassword(tempAuth, studentForm.email, studentForm.password);
         
         await setDoc(doc(db, "users", userCred.user.uid), {
             uid: userCred.user.uid,
@@ -152,7 +162,7 @@ const AdminDashboard: React.FC = () => {
             createdAt: new Date().toISOString(),
             isManual: true
         });
-        await firebaseAuth.signOut(tempAuth);
+        await signOut(tempAuth);
         alert("Student account created successfully!");
       }
 
@@ -222,6 +232,13 @@ const AdminDashboard: React.FC = () => {
     const snapshot = await getDocs(q);
     const enrollments = snapshot.docs.map(d => ({id: d.id, ...d.data()} as Enrollment));
     setStudentEnrollments(enrollments);
+
+    // Fetch Uploads
+    const uploadsQuery = query(collection(db, "student_uploads"), where("userId", "==", student.uid));
+    const uploadsSnap = await getDocs(uploadsQuery);
+    const uploadsData = uploadsSnap.docs.map(d => ({ id: d.id, ...d.data() } as StudentUpload));
+    uploadsData.sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+    setStudentUploads(uploadsData);
   };
 
   const handleManualEnroll = async () => {
@@ -269,6 +286,35 @@ const AdminDashboard: React.FC = () => {
           alert("Enrollment failed");
        }
     }
+  };
+
+  const handleAdminUploadForStudent = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file || !viewingStudent) return;
+
+      setUploadingId('admin-upload');
+      try {
+          const url = await uploadToSupabase(file, undefined, 'student-uploads');
+          
+          const newUpload: Omit<StudentUpload, 'id'> = {
+              userId: viewingStudent.uid,
+              studentName: viewingStudent.displayName || 'Student',
+              fileName: file.name,
+              fileUrl: url,
+              uploadedAt: new Date().toISOString(),
+              description: `Admin Upload: ${file.name}`,
+              uploadedBy: 'admin'
+          };
+
+          const docRef = await addDoc(collection(db, "student_uploads"), newUpload);
+          setStudentUploads(prev => [{ id: docRef.id, ...newUpload }, ...prev]);
+          alert("File uploaded for student!");
+      } catch (error: any) {
+          console.error("Upload failed", error);
+          alert("Upload failed: " + error.message);
+      } finally {
+          setUploadingId(null);
+      }
   };
 
   // --- Certificate Logic ---
@@ -452,7 +498,7 @@ const AdminDashboard: React.FC = () => {
   };
 
   const handleLogout = () => {
-      firebaseAuth.signOut(auth);
+      signOut(auth);
       navigate('/login');
   }
 
@@ -687,12 +733,31 @@ const AdminDashboard: React.FC = () => {
         {/* --- STUDENTS TAB --- */}
         {activeTab === 'students' && (
            <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden animate-in fade-in duration-300">
-             <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                <h3 className="text-lg font-bold text-gray-800">Registered Students</h3>
-                <span className="bg-white border border-gray-200 text-gray-600 px-3 py-1 rounded-full text-xs font-bold shadow-sm">{students.length} Total</span>
-             </div>
-             <div className="overflow-x-auto">
-                <table className="w-full text-left">
+             
+             {studentsError ? (
+                <div className="p-8 text-center">
+                    <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-600">
+                        <AlertTriangle className="w-8 h-8" />
+                    </div>
+                    <h3 className="text-lg font-bold text-gray-800 mb-2">Access Error</h3>
+                    <p className="text-gray-600 max-w-md mx-auto mb-6">{studentsError}</p>
+                    <button onClick={loadStudents} className="bg-gray-900 text-white px-6 py-2 rounded-lg font-bold hover:bg-black transition">
+                        Retry
+                    </button>
+                </div>
+             ) : loadingStudents ? (
+                <div className="p-12 text-center">
+                    <Loader2 className="w-10 h-10 animate-spin mx-auto mb-4 text-pink-600" />
+                    <p className="text-gray-500 font-medium">Loading student directory...</p>
+                </div>
+             ) : (
+                <>
+                 <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                    <h3 className="text-lg font-bold text-gray-800">Registered Students</h3>
+                    <span className="bg-white border border-gray-200 text-gray-600 px-3 py-1 rounded-full text-xs font-bold shadow-sm">{students.length} Total</span>
+                 </div>
+                 <div className="overflow-x-auto">
+                    <table className="w-full text-left">
                 <thead className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
                     <tr>
                     <th className="px-6 py-4 font-semibold">Student</th>
@@ -741,6 +806,8 @@ const AdminDashboard: React.FC = () => {
                 </tbody>
                 </table>
              </div>
+             </>
+           )}
            </div>
         )}
 
@@ -924,6 +991,68 @@ const AdminDashboard: React.FC = () => {
                                     );
                                 })
                             )}
+                        </div>
+
+                        <div className="mt-8 pt-6 border-t border-gray-200">
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="font-bold text-gray-800 flex items-center text-lg">
+                                    <FileText className="w-5 h-5 mr-2 text-blue-600"/> Student Documents
+                                </h3>
+                                <label className={`cursor-pointer bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition flex items-center text-sm font-bold shadow-sm ${uploadingId === 'admin-upload' ? 'opacity-70 pointer-events-none' : ''}`}>
+                                    {uploadingId === 'admin-upload' ? <Loader2 className="w-4 h-4 mr-2 animate-spin"/> : <Upload className="w-4 h-4 mr-2"/>}
+                                    {uploadingId === 'admin-upload' ? 'Uploading...' : 'Upload for Student'}
+                                    <input type="file" className="hidden" onChange={handleAdminUploadForStudent} accept=".pdf" />
+                                </label>
+                            </div>
+
+                            <div className="bg-gray-50 rounded-xl border border-gray-200 overflow-hidden">
+                                {studentUploads.length === 0 ? (
+                                    <div className="p-8 text-center text-gray-500 italic">
+                                        No documents uploaded yet.
+                                    </div>
+                                ) : (
+                                    <table className="w-full text-left text-sm">
+                                        <thead className="bg-gray-100 text-gray-500 uppercase text-xs font-semibold">
+                                            <tr>
+                                                <th className="px-4 py-3">Document</th>
+                                                <th className="px-4 py-3">Date</th>
+                                                <th className="px-4 py-3">Source</th>
+                                                <th className="px-4 py-3 text-right">Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-200">
+                                            {studentUploads.map((upload) => (
+                                                <tr key={upload.id} className="hover:bg-white transition">
+                                                    <td className="px-4 py-3 font-medium text-gray-800">
+                                                        <div className="flex items-center gap-2">
+                                                            <FileText className="w-4 h-4 text-gray-400"/>
+                                                            {upload.description || upload.fileName}
+                                                        </div>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-gray-500">
+                                                        {new Date(upload.uploadedAt).toLocaleDateString()}
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        <span className={`px-2 py-1 rounded-full text-xs font-bold ${upload.uploadedBy === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-green-100 text-green-700'}`}>
+                                                            {upload.uploadedBy === 'admin' ? 'Admin' : 'Student'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-4 py-3 text-right">
+                                                        <a 
+                                                            href={upload.fileUrl} 
+                                                            target="_blank" 
+                                                            rel="noopener noreferrer"
+                                                            className="text-blue-600 hover:underline font-medium inline-flex items-center"
+                                                        >
+                                                            <Download className="w-3 h-3 mr-1"/> Download
+                                                        </a>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                )}
+                            </div>
                         </div>
                     </div>
                 </div>

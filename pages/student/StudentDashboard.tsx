@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { auth, db } from '../../firebase';
-import { collection, query, where, getDocs, doc, getDoc, updateDoc } from 'firebase/firestore';
-import { Course, Enrollment, CertificateTemplate } from '../../types';
+import { collection, query, where, getDocs, doc, getDoc, updateDoc, addDoc, orderBy, deleteDoc } from 'firebase/firestore';
+import { Course, Enrollment, CertificateTemplate, StudentUpload } from '../../types';
 import { generateCertificate } from '../../services/certificateService';
 import { courseService } from '../../services/courseService';
-import { LogOut, BookOpen, Clock, Award, PlayCircle, CheckCircle, Loader2, Download, ExternalLink, AlertTriangle, ShoppingBag, ArrowRight } from 'lucide-react';
+import { uploadToSupabase } from '../../services/supabaseService';
+import { LogOut, BookOpen, Clock, Award, PlayCircle, CheckCircle, Loader2, Download, ExternalLink, AlertTriangle, ShoppingBag, ArrowRight, FileText, Upload, Trash, File } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 
 interface EnrolledCourseData extends Course {
@@ -24,6 +25,14 @@ export const StudentDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [generatingCertId, setGeneratingCertId] = useState<string | null>(null);
+  
+  // Uploads State
+  const [uploads, setUploads] = useState<StudentUpload[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [newUploadDesc, setNewUploadDesc] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [editingUploadId, setEditingUploadId] = useState<string | null>(null);
+  const [editUploadDesc, setEditUploadDesc] = useState('');
 
   useEffect(() => {
     if (!loadingAuth && !user) navigate('/auth');
@@ -78,6 +87,14 @@ export const StudentDashboard: React.FC = () => {
         const allPublished = await courseService.getAllPublished();
         const notEnrolled = allPublished.filter(c => !enrolledIds.includes(c.id));
         setAvailableCourses(notEnrolled);
+
+        // 3. Fetch Uploads
+        const uploadsQuery = query(collection(db, "student_uploads"), where("userId", "==", user.uid)); // orderBy requires composite index, skipping for now or sorting client side
+        const uploadsSnap = await getDocs(uploadsQuery);
+        const uploadsData = uploadsSnap.docs.map(d => ({ id: d.id, ...d.data() } as StudentUpload));
+        // Sort client-side to avoid index requirement errors
+        uploadsData.sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime());
+        setUploads(uploadsData);
 
       } catch (err: any) {
         console.error("Error fetching dashboard data:", err);
@@ -135,6 +152,78 @@ export const StudentDashboard: React.FC = () => {
       setGeneratingCertId(null);
     }
   };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) setSelectedFile(file);
+  };
+
+  const handleUpload = async () => {
+      if (!selectedFile || !user) {
+          alert("Please select a file.");
+          return;
+      }
+      if (!newUploadDesc.trim()) {
+          alert("Please enter a description for the document.");
+          return;
+      }
+
+      setIsUploading(true);
+      try {
+          const url = await uploadToSupabase(selectedFile, undefined, 'student-uploads');
+          
+          const newUpload: Omit<StudentUpload, 'id'> = {
+              userId: user.uid,
+              studentName: user.displayName || 'Student',
+              fileName: selectedFile.name,
+              fileUrl: url,
+              uploadedAt: new Date().toISOString(),
+              description: newUploadDesc,
+              uploadedBy: 'student'
+          };
+
+          const docRef = await addDoc(collection(db, "student_uploads"), newUpload);
+          setUploads(prev => [{ id: docRef.id, ...newUpload }, ...prev]);
+          setNewUploadDesc('');
+          setSelectedFile(null);
+          alert("File uploaded successfully!");
+      } catch (error: any) {
+          console.error("Upload failed", error);
+          alert("Upload failed: " + error.message);
+      } finally {
+          setIsUploading(false);
+      }
+  };
+
+  const startEditing = (upload: StudentUpload) => {
+      setEditingUploadId(upload.id);
+      setEditUploadDesc(upload.description || '');
+  };
+
+  const saveEdit = async () => {
+      if (!editingUploadId) return;
+      try {
+          await updateDoc(doc(db, "student_uploads", editingUploadId), {
+              description: editUploadDesc
+          });
+          setUploads(prev => prev.map(u => u.id === editingUploadId ? { ...u, description: editUploadDesc } : u));
+          setEditingUploadId(null);
+      } catch (e) {
+          console.error("Update failed", e);
+          alert("Failed to update description");
+      }
+  };
+
+  const handleDeleteUpload = async (id: string) => {
+      if(!window.confirm("Delete this file?")) return;
+      try {
+          await deleteDoc(doc(db, "student_uploads", id));
+          setUploads(prev => prev.filter(u => u.id !== id));
+      } catch (e) {
+          console.error("Delete failed", e);
+          alert("Could not delete file.");
+      }
+  }
 
   const handleLogout = () => {
     auth.signOut();
@@ -302,6 +391,103 @@ export const StudentDashboard: React.FC = () => {
             ))}
           </div>
         )}
+
+        {/* DOCUMENTS SECTION */}
+        <div className="mb-16">
+            <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center border-t border-gray-200 pt-10">
+              <FileText className="w-5 h-5 mr-2 text-blue-600" /> Submit Documents to Admin
+            </h2>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                {/* Upload Card */}
+                <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-200">
+                    <h3 className="font-bold text-gray-800 mb-2">Send PDF to Admin</h3>
+                    <p className="text-sm text-gray-500 mb-4">Upload assignments, proof of payment, or other documents for review.</p>
+                    <div className="space-y-4">
+                        <input 
+                            className="w-full border rounded-lg p-3 text-sm"
+                            placeholder="Description (e.g. Assignment 1)"
+                            value={newUploadDesc}
+                            onChange={(e) => setNewUploadDesc(e.target.value)}
+                        />
+                        <label className={`block w-full border-2 border-dashed border-gray-300 rounded-xl p-6 text-center cursor-pointer hover:bg-gray-50 transition ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
+                            <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2"/>
+                            <span className="text-sm text-gray-500 font-medium">{selectedFile ? selectedFile.name : "Click to select PDF"}</span>
+                            <input type="file" className="hidden" accept=".pdf,application/pdf" onChange={handleFileSelect} />
+                        </label>
+                        
+                        <button 
+                            onClick={handleUpload}
+                            disabled={isUploading || !selectedFile || !newUploadDesc.trim()}
+                            className="w-full bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+                        >
+                            {isUploading ? <><Loader2 className="w-4 h-4 animate-spin mr-2"/> Uploading...</> : "Upload Document"}
+                        </button>
+                    </div>
+                </div>
+
+                {/* Files List */}
+                <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                    <div className="p-4 bg-gray-50 border-b border-gray-200 font-bold text-gray-700 text-sm">
+                        Submission History
+                    </div>
+                    {uploads.length === 0 ? (
+                        <div className="p-8 text-center text-gray-500 italic">No documents uploaded yet.</div>
+                    ) : (
+                        <div className="divide-y divide-gray-100">
+                            {uploads.map(file => (
+                                <div key={file.id} className="p-4 flex items-center justify-between hover:bg-gray-50 transition">
+                                    <div className="flex items-center gap-3 overflow-hidden flex-1 mr-4">
+                                        <div className={`p-2 rounded-lg ${file.uploadedBy === 'admin' ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                                            <File className="w-5 h-5"/>
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            {editingUploadId === file.id ? (
+                                                <div className="flex items-center gap-2">
+                                                    <input 
+                                                        className="border rounded px-2 py-1 text-sm w-full"
+                                                        value={editUploadDesc}
+                                                        onChange={(e) => setEditUploadDesc(e.target.value)}
+                                                    />
+                                                    <button onClick={saveEdit} className="text-xs bg-green-500 text-white px-2 py-1 rounded">Save</button>
+                                                    <button onClick={() => setEditingUploadId(null)} className="text-xs bg-gray-300 text-gray-700 px-2 py-1 rounded">Cancel</button>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <div className="font-medium text-gray-800 truncate">{file.description || file.fileName}</div>
+                                                    <div className="text-xs text-gray-500 flex items-center gap-2">
+                                                        <span>{new Date(file.uploadedAt).toLocaleDateString()}</span>
+                                                        <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
+                                                        <span className={file.uploadedBy === 'admin' ? 'text-purple-600 font-bold' : 'text-gray-500'}>
+                                                            {file.uploadedBy === 'admin' ? 'From Admin' : 'Me'}
+                                                        </span>
+                                                    </div>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <a href={file.fileUrl} target="_blank" rel="noreferrer" className="p-2 text-gray-400 hover:text-blue-600 transition" title="Download">
+                                            <Download className="w-4 h-4"/>
+                                        </a>
+                                        {file.uploadedBy === 'student' && (
+                                            <>
+                                                <button onClick={() => startEditing(file)} className="p-2 text-gray-400 hover:text-green-600 transition" title="Edit">
+                                                    <FileText className="w-4 h-4"/>
+                                                </button>
+                                                <button onClick={() => handleDeleteUpload(file.id)} className="p-2 text-gray-400 hover:text-red-600 transition" title="Delete">
+                                                    <Trash className="w-4 h-4"/>
+                                                </button>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
 
         {/* EXPLORE MORE COURSES SECTION */}
         {availableCourses.length > 0 && (

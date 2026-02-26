@@ -10,7 +10,7 @@ export const setGlobalSupabaseUrl = (url: string) => {
     supabaseUrl = url.trim();
 };
 
-export const uploadToSupabase = async (file: File, urlOverride?: string): Promise<string> => {
+export const uploadToSupabase = async (file: File, urlOverride?: string, bucket: string = 'courses'): Promise<string> => {
     const activeUrl = urlOverride || supabaseUrl;
 
     // 1. Validation and Interactive Prompt for URL
@@ -43,17 +43,17 @@ export const uploadToSupabase = async (file: File, urlOverride?: string): Promis
     // 3. Ensure bucket exists (best effort, requires permissions)
     try {
         const { data: buckets } = await supabase.storage.listBuckets();
-        const bucketExists = buckets?.find(b => b.name === 'courses');
+        const bucketExists = buckets?.find(b => b.name === bucket);
         
         if (!bucketExists) {
             // Try to create if it doesn't exist (might fail with anon key, but worth a try if RLS allows)
-            const { error: createError } = await supabase.storage.createBucket('courses', {
+            const { error: createError } = await supabase.storage.createBucket(bucket, {
                 public: true,
                 fileSizeLimit: 52428800, // 50MB
                 allowedMimeTypes: ['image/*', 'application/pdf', 'video/*']
             });
             if (createError) {
-                console.warn("Could not create bucket 'courses'. Assuming it exists or permissions are restricted.", createError);
+                console.warn(`Could not create bucket '${bucket}'. Assuming it exists or permissions are restricted.`, createError);
             }
         }
     } catch (e) {
@@ -67,7 +67,7 @@ export const uploadToSupabase = async (file: File, urlOverride?: string): Promis
 
     // 5. Upload
     const { data, error } = await supabase.storage
-        .from('courses')
+        .from(bucket)
         .upload(filePath, file, {
             cacheControl: '3600',
             upsert: false
@@ -78,14 +78,14 @@ export const uploadToSupabase = async (file: File, urlOverride?: string): Promis
         
         // Handle "Bucket not found"
         if (error.message.includes("Bucket not found") || error.message.includes("resource was not found")) {
-             const msg = "Setup Required: The storage bucket 'courses' does not exist.\n\n" +
+             const msg = `Setup Required: The storage bucket '${bucket}' does not exist.\n\n` +
                          "Action Required:\n" +
                          "1. Go to your Supabase Dashboard > Storage.\n" +
-                         "2. Create a new bucket named 'courses'.\n" +
+                         `2. Create a new bucket named '${bucket}'.\n` +
                          "3. Set it to 'Public'.\n" +
                          "4. Add a Policy to allow uploads (INSERT/SELECT) for 'anon' role.";
              alert(msg);
-             throw new Error("Bucket 'courses' not found. Please create it in your Supabase Dashboard.");
+             throw new Error(`Bucket '${bucket}' not found. Please create it in your Supabase Dashboard.`);
         }
 
         // Handle RLS / Permissions specifically
@@ -93,7 +93,7 @@ export const uploadToSupabase = async (file: File, urlOverride?: string): Promis
              const msg = "Permission Denied: Storage Policy Missing or Incorrect.\n\n" +
                          "Action Required:\n" +
                          "1. Go to Supabase Dashboard > Storage > Policies.\n" +
-                         "2. Under 'courses' bucket, click 'New Policy'.\n" +
+                         `2. Under '${bucket}' bucket, click 'New Policy'.\n` +
                          "3. Select 'For full customization'.\n" +
                          "4. Add Policy Name (e.g. 'Allow Public Uploads').\n" +
                          "5. Allowed Operations: Check 'INSERT' and 'SELECT'.\n" +
@@ -112,8 +112,37 @@ export const uploadToSupabase = async (file: File, urlOverride?: string): Promis
 
     // 6. Get Public URL
     const { data: publicUrlData } = supabase.storage
-        .from('courses')
+        .from(bucket)
         .getPublicUrl(filePath);
 
     return publicUrlData.publicUrl;
+};
+
+export const listFiles = async (bucket: string, path: string = ''): Promise<{name: string, url: string}[]> => {
+    if (!supabaseUrl || !supabaseKey) return [];
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    
+    const { data, error } = await supabase.storage
+        .from(bucket)
+        .list(path, {
+            limit: 100,
+            offset: 0,
+            sortBy: { column: 'name', order: 'asc' },
+        });
+
+    if (error) {
+        console.error("Error listing files:", error);
+        return [];
+    }
+
+    return data.map(file => {
+        const { data: publicUrlData } = supabase.storage
+            .from(bucket)
+            .getPublicUrl(`${path ? path + '/' : ''}${file.name}`);
+            
+        return {
+            name: file.name,
+            url: publicUrlData.publicUrl
+        };
+    });
 };

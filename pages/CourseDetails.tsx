@@ -93,8 +93,8 @@ export const CourseDetails: React.FC = () => {
   };
 
   const handleEnroll = () => {
-      if (course) navigate(`/payment/${course.id}`);
-    };
+    if (course) navigate(`/payment/${course.id}`);
+  };
 
   // Helper to calculate progress
   const calculateProgress = (completedLessonIds: string[]) => {
@@ -461,6 +461,17 @@ export const CourseDetails: React.FC = () => {
                         <span className="truncate">{activeLesson.title}</span>
                     </h3>
                     <div className="flex items-center gap-2 flex-shrink-0">
+                        {activeLesson.type === 'pdf' && activeLesson.content && (
+                            <a 
+                                href={activeLesson.content}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="p-2 hover:bg-gray-200 rounded-full transition text-gray-500"
+                                title="Download PDF"
+                            >
+                                <Download className="w-5 h-5"/>
+                            </a>
+                        )}
                         <button 
                             onClick={() => setIsMaximized(!isMaximized)} 
                             className="p-2 hover:bg-gray-200 rounded-full transition text-gray-500 hidden md:block"

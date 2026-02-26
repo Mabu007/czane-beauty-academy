@@ -1,13 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import * as RouterDOM from 'react-router-dom';
+import { useParams, Navigate } from 'react-router-dom';
 import { useAuthState } from 'react-firebase-hooks/auth';
 import { auth, db } from '../firebase';
 import { Course } from '../types';
 import { doc, getDoc } from 'firebase/firestore';
-import { Loader2, Lock, ShieldCheck, ArrowRight } from 'lucide-react';
+import { Loader2, Lock, ShieldCheck, ArrowRight, ExternalLink } from 'lucide-react';
 import { payfastConfig } from '../services/payfastService';
-
-const { useParams, Navigate } = RouterDOM;
 
 export const PaymentPage: React.FC = () => {
   const { courseId } = useParams<{ courseId: string }>();
@@ -34,7 +32,7 @@ export const PaymentPage: React.FC = () => {
   }, [courseId]);
 
   if (loadingAuth || loading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin text-pink-600 w-10 h-10"/></div>;
-  if (!user) return <Navigate to={`/auth?redirect=/payment/${courseId}`} />;
+  if (!user) return <Navigate to={`/auth?redirect=/payment/${courseId}`} replace />;
   if (!course) return <div className="text-center p-10">Course not found</div>;
 
   // Construct URLs (Assuming locally served or deployed url)
@@ -69,7 +67,7 @@ export const PaymentPage: React.FC = () => {
                 </div>
             </div>
 
-            <form action={payfastConfig.url} method="post">
+            <form action={payfastConfig.url} method="post" target="_blank">
                 <input type="hidden" name="merchant_id" value={payfastConfig.merchantId} />
                 <input type="hidden" name="merchant_key" value={payfastConfig.merchantKey} />
                 <input type="hidden" name="amount" value={course.price.toFixed(2)} />
@@ -80,12 +78,15 @@ export const PaymentPage: React.FC = () => {
                 <input type="hidden" name="name_first" value={user.displayName || ""} />
                 
                 <button type="submit" className="w-full bg-gradient-to-r from-pink-600 to-purple-700 text-white font-bold py-4 rounded-xl hover:shadow-lg transition transform hover:-translate-y-1 flex justify-center items-center">
-                    Proceed to Payment <ArrowRight className="ml-2 w-5 h-5"/>
+                    Proceed to Payment <ExternalLink className="ml-2 w-5 h-5"/>
                 </button>
             </form>
             
-            <div className="mt-4 flex items-center justify-center text-xs text-gray-400">
-                <Lock className="w-3 h-3 mr-1"/> SSL Encrypted Transaction
+            <div className="mt-4 flex flex-col items-center justify-center text-xs text-gray-400 text-center">
+                <div className="flex items-center mb-1">
+                     <Lock className="w-3 h-3 mr-1"/> SSL Encrypted Transaction
+                </div>
+                <p>Payment will open in a new secure tab.</p>
             </div>
         </div>
       </div>

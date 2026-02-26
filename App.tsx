@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import * as RouterDOM from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import LandingPage from './pages/LandingPage';
@@ -14,8 +14,6 @@ import { useAuthState } from 'react-firebase-hooks/auth';
 import { auth } from './firebase';
 import { checkAdminClaim } from './services/authService';
 import { Loader2 } from 'lucide-react';
-
-const { HashRouter, Routes, Route, Navigate } = RouterDOM;
 
 // Basic route protection for any logged-in user
 const PrivateRoute: React.FC<{ children: React.ReactElement }> = ({ children }) => {
@@ -35,8 +33,6 @@ const PrivateRoute: React.FC<{ children: React.ReactElement }> = ({ children }) 
 };
 
 // Strict route protection for Admins using Custom Claims
-// This guard prevents the race condition where a logged-in admin is treated as a student
-// because the claims hadn't loaded yet.
 const AdminRoute: React.FC<{ children: React.ReactElement }> = ({ children }) => {
   const [user, authLoading] = useAuthState(auth);
   // null = state unknown/loading, false = not admin, true = admin
@@ -97,28 +93,22 @@ const App: React.FC = () => {
             <Route path="/auth" element={<AuthPage />} />
             {/* Redirect legacy login path */}
             <Route path="/login" element={<Navigate to="/auth" replace />} />
-            <Route path="/payment/:courseId" element={<PaymentPage />} />
             <Route path="/payment/success" element={<PaymentSuccess />} />
+            <Route path="/payment/:courseId" element={<PaymentPage />} />
             
-            <Route 
-              path="/admin/dashboard" 
-              element={
+            <Route path="/admin/dashboard" element={
                 <AdminRoute>
                   <AdminDashboard />
                 </AdminRoute>
-              } 
-            />
+            } />
              {/* Redirect legacy admin path */}
-             <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
+            <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
 
-            <Route 
-              path="/student/dashboard" 
-              element={
+            <Route path="/student/dashboard" element={
                 <PrivateRoute>
                   <StudentDashboard />
                 </PrivateRoute>
-              } 
-            />
+            } />
           </Routes>
         </main>
         <Footer />

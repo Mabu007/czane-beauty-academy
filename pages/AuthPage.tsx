@@ -1,12 +1,10 @@
 import React, { useState } from 'react';
-import * as firebaseAuth from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { auth, db } from '../firebase';
 import { doc, setDoc } from 'firebase/firestore';
-import * as RouterDOM from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Lock, Mail, ArrowRight, User as UserIcon, Loader2 } from 'lucide-react';
 import { checkAdminClaim } from '../services/authService';
-
-const { useNavigate } = RouterDOM;
 
 export const AuthPage: React.FC = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -27,15 +25,15 @@ export const AuthPage: React.FC = () => {
       
       if (isLogin) {
         // 1. Sign In
-        const userCredential = await firebaseAuth.signInWithEmailAndPassword(auth, email, password);
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
         user = userCredential.user;
       } else {
         // 1. Register
-        const userCredential = await firebaseAuth.createUserWithEmailAndPassword(auth, email, password);
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
         user = userCredential.user;
 
         // 2. Update Profile Display Name
-        await firebaseAuth.updateProfile(user, { displayName: name });
+        await updateProfile(user, { displayName: name });
 
         // 3. Create User Document
         await setDoc(doc(db, "users", user.uid), {
@@ -47,9 +45,6 @@ export const AuthPage: React.FC = () => {
       }
       
       // 4. Check Claims & Redirect
-      // We explicitly check the claim here to decide the immediate route.
-      // New registrations usually won't have the claim yet unless a Cloud Function runs instantly,
-      // so they default to student dashboard.
       const isAdmin = await checkAdminClaim(user);
 
       if (isAdmin) {
